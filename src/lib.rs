@@ -1522,11 +1522,11 @@ impl<W: io::Write> Ansi<W> {
     }
 
     fn write_hyperlink(&mut self, link: &HyperlinkSpec) -> io::Result<()> {
-        self.write_str("\x1B]8;;")?;
+        self.write_all(b"\x1B]8;;")?;
         if let Some(uri) = link.uri() {
-            self.write_str(uri)?;
+            self.write_all(uri)?;
         }
-        self.write_str("\x1B\\")
+        self.write_all(b"\x1B\\")
     }
 }
 
@@ -2091,17 +2091,17 @@ impl FromStr for Color {
 /// A hyperlink specification.
 #[derive(Clone, Debug)]
 pub struct HyperlinkSpec<'a> {
-    uri: Option<&'a str>,
+    uri: Option<&'a [u8]>,
 }
 
 impl<'a> HyperlinkSpec<'a> {
     /// Creates a new hyperlink specification.
-    pub fn new(uri: &'a str) -> HyperlinkSpec<'a> {
+    pub fn new(uri: &'a [u8]) -> HyperlinkSpec<'a> {
         HyperlinkSpec { uri: Some(uri) }
     }
 
     /// Returns the URI of the hyperlink.
-    pub fn uri(&self) -> Option<&'a str> {
+    pub fn uri(&self) -> Option<&'a [u8]> {
         self.uri
     }
 }
@@ -2378,7 +2378,7 @@ mod tests {
     fn test_ansi_hyperlink() {
         let mut buf = Ansi::new(vec![]);
         let _ =
-            buf.write_hyperlink(&HyperlinkSpec::new("https://example.com"));
+            buf.write_hyperlink(&HyperlinkSpec::new(b"https://example.com"));
         assert_eq!(buf.0, b"\x1B]8;;https://example.com\x1B\\");
     }
 }
