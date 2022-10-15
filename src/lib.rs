@@ -10,6 +10,8 @@ to an in memory buffer. While this is easy to do with ANSI escape sequences
 (because they are in the buffer themselves), it is trickier to do with the
 Windows console API, which requires synchronous communication.
 
+In ANSI mode, this crate also provides support for writing hyperlinks.
+
 # Organization
 
 The `WriteColor` trait extends the `io::Write` trait with methods for setting
@@ -141,6 +143,11 @@ pub trait WriteColor: io::Write {
     /// Returns true if and only if the underlying writer supports colors.
     fn supports_color(&self) -> bool;
 
+    /// Returns true if and only if the underlying writer supports hyperlinks.
+    ///
+    /// This can be used to avoid generating hyperlink URIs unnecessarily.
+    fn supports_hyperlinks(&self) -> bool;
+
     /// Set the color settings of the writer.
     ///
     /// Subsequent writes to this writer will use these settings until either
@@ -185,6 +192,9 @@ impl<'a, T: ?Sized + WriteColor> WriteColor for &'a mut T {
     fn supports_color(&self) -> bool {
         (&**self).supports_color()
     }
+    fn supports_hyperlinks(&self) -> bool {
+        (&**self).supports_hyperlinks()
+    }
     fn set_color(&mut self, spec: &ColorSpec) -> io::Result<()> {
         (&mut **self).set_color(spec)
     }
@@ -202,6 +212,9 @@ impl<'a, T: ?Sized + WriteColor> WriteColor for &'a mut T {
 impl<T: ?Sized + WriteColor> WriteColor for Box<T> {
     fn supports_color(&self) -> bool {
         (&**self).supports_color()
+    }
+    fn supports_hyperlinks(&self) -> bool {
+        (&**self).supports_hyperlinks()
     }
     fn set_color(&mut self, spec: &ColorSpec) -> io::Result<()> {
         (&mut **self).set_color(spec)
@@ -636,6 +649,11 @@ impl WriteColor for StandardStream {
     }
 
     #[inline]
+    fn supports_hyperlinks(&self) -> bool {
+        self.wtr.supports_hyperlinks()
+    }
+
+    #[inline]
     fn set_color(&mut self, spec: &ColorSpec) -> io::Result<()> {
         self.wtr.set_color(spec)
     }
@@ -675,6 +693,11 @@ impl<'a> WriteColor for StandardStreamLock<'a> {
     }
 
     #[inline]
+    fn supports_hyperlinks(&self) -> bool {
+        self.wtr.supports_hyperlinks()
+    }
+
+    #[inline]
     fn set_color(&mut self, spec: &ColorSpec) -> io::Result<()> {
         self.wtr.set_color(spec)
     }
@@ -711,6 +734,11 @@ impl WriteColor for BufferedStandardStream {
     #[inline]
     fn supports_color(&self) -> bool {
         self.wtr.supports_color()
+    }
+
+    #[inline]
+    fn supports_hyperlinks(&self) -> bool {
+        self.wtr.supports_hyperlinks()
     }
 
     #[inline]
@@ -769,6 +797,15 @@ impl<W: io::Write> WriteColor for WriterInner<W> {
             WriterInner::Ansi(_) => true,
             #[cfg(windows)]
             WriterInner::Windows { .. } => true,
+        }
+    }
+
+    fn supports_hyperlinks(&self) -> bool {
+        match *self {
+            WriterInner::NoColor(_) => false,
+            WriterInner::Ansi(_) => true,
+            #[cfg(windows)]
+            WriterInner::Windows { .. } => false,
         }
     }
 
@@ -847,6 +884,16 @@ impl<'a, W: io::Write> WriteColor for WriterInnerLock<'a, W> {
             WriterInnerLock::Ansi(_) => true,
             #[cfg(windows)]
             WriterInnerLock::Windows { .. } => true,
+        }
+    }
+
+    fn supports_hyperlinks(&self) -> bool {
+        match *self {
+            WriterInnerLock::Unreachable(_) => unreachable!(),
+            WriterInnerLock::NoColor(_) => false,
+            WriterInnerLock::Ansi(_) => true,
+            #[cfg(windows)]
+            WriterInnerLock::Windows { .. } => false,
         }
     }
 
@@ -1221,6 +1268,16 @@ impl WriteColor for Buffer {
     }
 
     #[inline]
+    fn supports_hyperlinks(&self) -> bool {
+        match self.0 {
+            BufferInner::NoColor(_) => false,
+            BufferInner::Ansi(_) => true,
+            #[cfg(windows)]
+            BufferInner::Windows(_) => false,
+        }
+    }
+
+    #[inline]
     fn set_color(&mut self, spec: &ColorSpec) -> io::Result<()> {
         match self.0 {
             BufferInner::NoColor(ref mut w) => w.set_color(spec),
@@ -1301,6 +1358,11 @@ impl<W: io::Write> WriteColor for NoColor<W> {
     }
 
     #[inline]
+    fn supports_hyperlinks(&self) -> bool {
+        false
+    }
+
+    #[inline]
     fn set_color(&mut self, _: &ColorSpec) -> io::Result<()> {
         Ok(())
     }
@@ -1362,6 +1424,11 @@ impl<W: io::Write> io::Write for Ansi<W> {
 impl<W: io::Write> WriteColor for Ansi<W> {
     #[inline]
     fn supports_color(&self) -> bool {
+        true
+    }
+
+    #[inline]
+    fn supports_hyperlinks(&self) -> bool {
         true
     }
 
@@ -1535,6 +1602,10 @@ impl WriteColor for io::Sink {
         false
     }
 
+    fn supports_hyperlinks(&self) -> bool {
+        false
+    }
+
     fn set_color(&mut self, _: &ColorSpec) -> io::Result<()> {
         Ok(())
     }
@@ -1639,6 +1710,11 @@ impl WriteColor for WindowsBuffer {
     #[inline]
     fn supports_color(&self) -> bool {
         true
+    }
+
+    #[inline]
+    fn supports_hyperlinks(&self) -> bool {
+        false
     }
 
     #[inline]
@@ -2149,6 +2225,9 @@ impl<W: io::Write> LossyStandardStream<W> {
 impl<W: WriteColor> WriteColor for LossyStandardStream<W> {
     fn supports_color(&self) -> bool {
         self.wtr.supports_color()
+    }
+    fn supports_hyperlinks(&self) -> bool {
+        self.wtr.supports_hyperlinks()
     }
     fn set_color(&mut self, spec: &ColorSpec) -> io::Result<()> {
         self.wtr.set_color(spec)
