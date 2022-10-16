@@ -161,9 +161,12 @@ pub trait WriteColor: io::Write {
     ///
     /// Subsequent writes to this writer will use this hyperlink until a new
     /// hyperlink is set. The hyperlink may be removed by passing
-    /// `HyperlinkSpec::default()`.
+    /// `HyperlinkSpec::none()`.
     ///
     /// If there was a problem setting the hyperlink, then an error is returned.
+    ///
+    /// The `WriteColorExt::write_hyperlink` function is provided for writing
+    /// hyperlinks whose content is single-colored.
     fn set_hyperlink(&mut self, link: &HyperlinkSpec) -> io::Result<()>;
 
     /// Reset the current color settings to their original settings.
@@ -187,6 +190,25 @@ pub trait WriteColor: io::Write {
         false
     }
 }
+
+/// This trait defines extensions for `WriteColor`
+pub trait WriteColorExt: WriteColor {
+    /// Writes a hyperlink.
+    ///
+    /// If hyperlinks are not supported (when `supports_hyperlinks` returns `false`),
+    /// `label` is written as-is to the output.
+    fn write_hyperlink(
+        &mut self,
+        link: &HyperlinkSpec,
+        label: &[u8],
+    ) -> io::Result<()> {
+        self.set_hyperlink(link)?;
+        self.write_all(label)?;
+        self.set_hyperlink(&HyperlinkSpec::none())
+    }
+}
+
+impl<W: WriteColor> WriteColorExt for W {}
 
 impl<'a, T: ?Sized + WriteColor> WriteColor for &'a mut T {
     fn supports_color(&self) -> bool {
@@ -1460,7 +1482,11 @@ impl<W: io::Write> WriteColor for Ansi<W> {
 
     #[inline]
     fn set_hyperlink(&mut self, link: &HyperlinkSpec) -> io::Result<()> {
-        self.write_hyperlink(link)
+        self.write_str("\x1B]8;;")?;
+        if let Some(uri) = link.uri() {
+            self.write_all(uri)?;
+        }
+        self.write_str("\x1B\\")
     }
 
     #[inline]
@@ -1586,14 +1612,6 @@ impl<W: io::Write> Ansi<W> {
                 Color::__Nonexhaustive => unreachable!(),
             }
         }
-    }
-
-    fn write_hyperlink(&mut self, link: &HyperlinkSpec) -> io::Result<()> {
-        self.write_all(b"\x1B]8;;")?;
-        if let Some(uri) = link.uri() {
-            self.write_all(uri)?;
-        }
-        self.write_all(b"\x1B\\")
     }
 }
 
@@ -2176,6 +2194,11 @@ impl<'a> HyperlinkSpec<'a> {
         HyperlinkSpec { uri: Some(uri) }
     }
 
+    /// Creates a hyperlink specification representing no hyperlink.
+    pub fn none() -> HyperlinkSpec<'a> {
+        HyperlinkSpec { uri: None }
+    }
+
     /// Returns the URI of the hyperlink.
     pub fn uri(&self) -> Option<&'a [u8]> {
         self.uri
@@ -2184,7 +2207,7 @@ impl<'a> HyperlinkSpec<'a> {
 
 impl<'a> Default for HyperlinkSpec<'a> {
     fn default() -> HyperlinkSpec<'a> {
-        HyperlinkSpec { uri: None }
+        HyperlinkSpec::none()
     }
 }
 
@@ -2279,7 +2302,7 @@ fn write_lossy_utf8<W: io::Write>(mut w: W, buf: &[u8]) -> io::Result<usize> {
 mod tests {
     use super::{
         Ansi, Color, ColorSpec, HyperlinkSpec, ParseColorError,
-        ParseColorErrorKind, StandardStream, WriteColor,
+        ParseColorErrorKind, StandardStream, WriteColor, WriteColorExt,
     };
 
     fn assert_is_send<T: Send>() {}
@@ -2456,8 +2479,13 @@ mod tests {
     #[test]
     fn test_ansi_hyperlink() {
         let mut buf = Ansi::new(vec![]);
-        let _ =
-            buf.write_hyperlink(&HyperlinkSpec::new(b"https://example.com"));
-        assert_eq!(buf.0, b"\x1B]8;;https://example.com\x1B\\");
+        let _ = buf.write_hyperlink(
+            &HyperlinkSpec::new(b"https://example.com"),
+            b"label",
+        );
+        assert_eq!(
+            buf.0,
+            b"\x1B]8;;https://example.com\x1B\\label\x1B]8;;\x1B\\"
+        );
     }
 }
