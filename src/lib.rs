@@ -100,18 +100,10 @@ use atty;
 use termcolor::{ColorChoice, StandardStream};
 
 let preference = argv.get_flag("color").unwrap_or("auto");
-let choice = match preference {
-    "always" => ColorChoice::Always,
-    "ansi" => ColorChoice::AlwaysAnsi,
-    "auto" => {
-        if atty::is(atty::Stream::Stdout) {
-            ColorChoice::Auto
-        } else {
-            ColorChoice::Never
-        }
-    }
-    _ => ColorChoice::Never,
-};
+let mut choice = preference.parse::<ColorChoice>()?;
+if choice == ColorChoice::Auto && !atty::is(atty::Stream::Stdout) {
+    choice = ColorChoice::Never;
+}
 let stdout = StandardStream::stdout(choice);
 // ... write to stdout
 ```
@@ -119,7 +111,7 @@ let stdout = StandardStream::stdout(choice);
 Currently, `termcolor` does not provide anything to do this for you.
 */
 
-#![deny(missing_docs)]
+#![deny(missing_debug_implementations, missing_docs)]
 
 // #[cfg(doctest)]
 // use doc_comment::doctest;
@@ -253,6 +245,13 @@ impl<T: ?Sized + WriteColor> WriteColor for Box<T> {
 }
 
 /// ColorChoice represents the color preferences of an end user.
+///
+/// The `Default` implementation for this type will select `Auto`, which tries
+/// to do the right thing based on the current environment.
+///
+/// The `FromStr` implementation for this type converts a lowercase kebab-case
+/// string of the variant name to the corresponding variant. Any other string
+/// results in an error.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ColorChoice {
     /// Try very hard to emit colors. This includes emitting ANSI colors
@@ -267,6 +266,29 @@ pub enum ColorChoice {
     Auto,
     /// Never emit colors.
     Never,
+}
+
+/// The default is `Auto`.
+impl Default for ColorChoice {
+    fn default() -> ColorChoice {
+        ColorChoice::Auto
+    }
+}
+
+impl FromStr for ColorChoice {
+    type Err = ColorChoiceParseError;
+
+    fn from_str(s: &str) -> Result<ColorChoice, ColorChoiceParseError> {
+        match s.to_lowercase().as_str() {
+            "always" => Ok(ColorChoice::Always),
+            "always-ansi" => Ok(ColorChoice::AlwaysAnsi),
+            "never" => Ok(ColorChoice::Never),
+            "auto" => Ok(ColorChoice::Auto),
+            unknown => Err(ColorChoiceParseError {
+                unknown_choice: unknown.to_string(),
+            }),
+        }
+    }
 }
 
 impl ColorChoice {
@@ -341,6 +363,25 @@ impl ColorChoice {
     }
 }
 
+/// An error that occurs when parsing a `ColorChoice` fails.
+#[derive(Clone, Debug)]
+pub struct ColorChoiceParseError {
+    unknown_choice: String,
+}
+
+impl std::error::Error for ColorChoiceParseError {}
+
+impl fmt::Display for ColorChoiceParseError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "unrecognized color choice '{}': valid choices are: \
+             always, always-ansi, never, auto",
+            self.unknown_choice,
+        )
+    }
+}
+
 /// `std::io` implements `Stdout` and `Stderr` (and their `Lock` variants) as
 /// separate types, which makes it difficult to abstract over them. We use
 /// some simple internal enum types to work around this.
@@ -352,6 +393,7 @@ enum StandardStreamType {
     StderrBuffered,
 }
 
+#[derive(Debug)]
 enum IoStandardStream {
     Stdout(io::Stdout),
     Stderr(io::Stderr),
@@ -421,6 +463,7 @@ impl io::Write for IoStandardStream {
 
 // Same rigmarole for the locked variants of the standard streams.
 
+#[derive(Debug)]
 enum IoStandardStreamLock<'a> {
     StdoutLock(io::StdoutLock<'a>),
     StderrLock(io::StderrLock<'a>),
@@ -446,6 +489,7 @@ impl<'a> io::Write for IoStandardStreamLock<'a> {
 
 /// Satisfies `io::Write` and `WriteColor`, and supports optional coloring
 /// to either of the standard output streams, stdout and stderr.
+#[derive(Debug)]
 pub struct StandardStream {
     wtr: LossyStandardStream<WriterInner<IoStandardStream>>,
 }
@@ -457,17 +501,20 @@ pub struct StandardStream {
 ///
 /// The lifetime `'a` refers to the lifetime of the corresponding
 /// `StandardStream`.
+#[derive(Debug)]
 pub struct StandardStreamLock<'a> {
     wtr: LossyStandardStream<WriterInnerLock<'a, IoStandardStreamLock<'a>>>,
 }
 
 /// Like `StandardStream`, but does buffered writing.
+#[derive(Debug)]
 pub struct BufferedStandardStream {
     wtr: LossyStandardStream<WriterInner<IoStandardStream>>,
 }
 
 /// WriterInner is a (limited) generic representation of a writer. It is
 /// limited because W should only ever be stdout/stderr on Windows.
+#[derive(Debug)]
 enum WriterInner<W> {
     NoColor(NoColor<W>),
     Ansi(Ansi<W>),
@@ -480,6 +527,7 @@ enum WriterInner<W> {
 
 /// WriterInnerLock is a (limited) generic representation of a writer. It is
 /// limited because W should only ever be stdout/stderr on Windows.
+#[derive(Debug)]
 enum WriterInnerLock<'a, W> {
     NoColor(NoColor<W>),
     Ansi(Ansi<W>),
@@ -976,6 +1024,7 @@ impl<'a, W: io::Write> WriteColor for WriterInnerLock<'a, W> {
 ///
 /// It is intended for a `BufferWriter` to be put in an `Arc` and written to
 /// from multiple threads simultaneously.
+#[derive(Debug)]
 pub struct BufferWriter {
     stream: LossyStandardStream<IoStandardStream>,
     printed: AtomicBool,
@@ -1029,7 +1078,7 @@ impl BufferWriter {
         }
         let stream = LossyStandardStream::new(IoStandardStream::new(sty));
         BufferWriter {
-            stream: stream,
+            stream,
             printed: AtomicBool::new(false),
             separator: None,
             color_choice: choice,
@@ -1134,9 +1183,11 @@ impl BufferWriter {
 /// method, which will take color preferences and the environment into
 /// account. However, buffers can also be manually created using `no_color`,
 /// `ansi` or `console` (on Windows).
+#[derive(Debug)]
 pub struct Buffer(BufferInner);
 
 /// BufferInner is an enumeration of different buffer types.
+#[derive(Debug)]
 enum BufferInner {
     /// No coloring information should be applied. This ignores all coloring
     /// directives.
@@ -1336,6 +1387,7 @@ impl WriteColor for Buffer {
 }
 
 /// Satisfies `WriteColor` but ignores all color options.
+#[derive(Debug)]
 pub struct NoColor<W>(W);
 
 impl<W: Write> NoColor<W> {
@@ -1406,6 +1458,7 @@ impl<W: io::Write> WriteColor for NoColor<W> {
 }
 
 /// Satisfies `WriteColor` using standard ANSI escape sequences.
+#[derive(Debug)]
 pub struct Ansi<W>(W);
 
 impl<W: Write> Ansi<W> {
@@ -1435,6 +1488,17 @@ impl<W: io::Write> io::Write for Ansi<W> {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.0.write(buf)
+    }
+
+    // Adding this method here is not required because it has a default impl,
+    // but it seems to provide a perf improvement in some cases when using
+    // a `BufWriter` with lots of writes.
+    //
+    // See https://github.com/BurntSushi/termcolor/pull/56 for more details
+    // and a minimized example.
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        self.0.write_all(buf)
     }
 
     #[inline]
@@ -1470,6 +1534,9 @@ impl<W: io::Write> WriteColor for Ansi<W> {
         }
         if spec.underline {
             self.write_str("\x1B[4m")?;
+        }
+        if spec.strikethrough {
+            self.write_str("\x1B[9m")?;
         }
         if let Some(ref c) = spec.fg_color {
             self.write_color(true, c, spec.intense)?;
@@ -1769,6 +1836,7 @@ pub struct ColorSpec {
     dimmed: bool,
     italic: bool,
     reset: bool,
+    strikethrough: bool,
 }
 
 impl Default for ColorSpec {
@@ -1782,6 +1850,7 @@ impl Default for ColorSpec {
             dimmed: false,
             italic: false,
             reset: true,
+            strikethrough: false,
         }
     }
 }
@@ -1874,6 +1943,21 @@ impl ColorSpec {
         self
     }
 
+    /// Get whether this is strikethrough or not.
+    ///
+    /// Note that the strikethrough setting has no effect in a Windows console.
+    pub fn strikethrough(&self) -> bool {
+        self.strikethrough
+    }
+
+    /// Set whether the text is strikethrough or not.
+    ///
+    /// Note that the strikethrough setting has no effect in a Windows console.
+    pub fn set_strikethrough(&mut self, yes: bool) -> &mut ColorSpec {
+        self.strikethrough = yes;
+        self
+    }
+
     /// Get whether reset is enabled or not.
     ///
     /// reset is enabled by default. When disabled and using ANSI escape
@@ -1935,6 +2019,7 @@ impl ColorSpec {
             && !self.dimmed
             && !self.italic
             && !self.intense
+            && !self.strikethrough
     }
 
     /// Clears this color specification so that it has no color/style settings.
@@ -1946,6 +2031,7 @@ impl ColorSpec {
         self.intense = false;
         self.dimmed = false;
         self.italic = false;
+        self.strikethrough = false;
     }
 
     /// Writes this color spec to the given Windows console.
@@ -2211,6 +2297,7 @@ impl<'a> Default for HyperlinkSpec<'a> {
     }
 }
 
+#[derive(Debug)]
 struct LossyStandardStream<W> {
     wtr: W,
     #[cfg(windows)]
@@ -2220,14 +2307,14 @@ struct LossyStandardStream<W> {
 impl<W: io::Write> LossyStandardStream<W> {
     #[cfg(not(windows))]
     fn new(wtr: W) -> LossyStandardStream<W> {
-        LossyStandardStream { wtr: wtr }
+        LossyStandardStream { wtr }
     }
 
     #[cfg(windows)]
     fn new(wtr: W) -> LossyStandardStream<W> {
         let is_console = wincon::Console::stdout().is_ok()
             || wincon::Console::stderr().is_ok();
-        LossyStandardStream { wtr: wtr, is_console: is_console }
+        LossyStandardStream { wtr, is_console }
     }
 
     #[cfg(not(windows))]
@@ -2237,7 +2324,7 @@ impl<W: io::Write> LossyStandardStream<W> {
 
     #[cfg(windows)]
     fn wrap<Q: io::Write>(&self, wtr: Q) -> LossyStandardStream<Q> {
-        LossyStandardStream { wtr: wtr, is_console: self.is_console }
+        LossyStandardStream { wtr, is_console: self.is_console }
     }
 
     fn get_ref(&self) -> &W {
@@ -2434,16 +2521,19 @@ mod tests {
                     for underline in vec![false, true] {
                         for intense in vec![false, true] {
                             for italic in vec![false, true] {
-                                for dimmed in vec![false, true] {
-                                    let mut color = ColorSpec::new();
-                                    color.set_fg(fg);
-                                    color.set_bg(bg);
-                                    color.set_bold(bold);
-                                    color.set_underline(underline);
-                                    color.set_intense(intense);
-                                    color.set_dimmed(dimmed);
-                                    color.set_italic(italic);
-                                    result.push(color);
+                                for strikethrough in vec![false, true] {
+                                    for dimmed in vec![false, true] {
+                                        let mut color = ColorSpec::new();
+                                        color.set_fg(fg);
+                                        color.set_bg(bg);
+                                        color.set_bold(bold);
+                                        color.set_underline(underline);
+                                        color.set_intense(intense);
+                                        color.set_italic(italic);
+                                        color.set_dimmed(dimmed);
+                                        color.set_strikethrough(strikethrough);
+                                        result.push(color);
+                                    }
                                 }
                             }
                         }
